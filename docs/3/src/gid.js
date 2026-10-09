@@ -6,9 +6,7 @@ class C {// Constant
     static get maxSize() {return this.#maxSize}
     static get b64u() {return this.#b64u}
 }
-
 class Is {
-    //static byte(v) {return Number.isSafeInteger(v) && 0<v && v<=C.maxSize}
     static byte(v, bFn) {return Number.isSafeInteger(v) && 0<v && v<=C.maxSize && (bFn ? bFn(v) : true)}
     static bin(v) {return v instanceof Uint8Array && 0<v.byteLength && v.byteLength<=C.maxSize}
     static str(v) {return 'string'===typeof v && C.b64u.test(v)}
@@ -41,16 +39,36 @@ export class Bin64 { // Base64URL ↔ Uinit8Array
         return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
     }
 }
+
+// 【新設】len 専用のネスト管理クラス（内部利用のみで、外部には export しない）
+class Len {
+    #parent;
+    constructor(parent) { this.#parent = parent; }
+    get bin() { return this.#parent._.bin.byteLength; }
+    get str() { return this.#parent._.str.length; }
+//    static calcStr(byte) {return Math.ceil((byte * 4) / 3)} // バイト数からBase64URLの長さを取得する
+//    static calcByteRemainder(byte) {return byte % 3} // バイト数からBase64URLの長さの余りを取得する
+//    static calcPad(byte) {const R = calcByteRemainder(byte); return R === 1 ? 4 : R === 2 ? 2 : 0;} // パディング数
+}
 // IDやUniqueは誇張である。同一性を担保できる保証はなくあくまで衝突確率は常に存在する。まだRandomのほうが事実に近い。最もRandomさえも真性乱数なわけではないため正確ではないが。
 // R1: 1Byte(8bit)単位。ファイルサイズ単位で有利だがBase64URL表現上は端数が発生しうる。
 // R2: 2のN乗Byte単位。ファイルサイズ単位で有利だがBase64URL表現上は端数が発生する。(1,2,4,8,16,32,64,128,256,...)
 // R3: 3Byte(24bit)単位。端数が発生しないためBase64URL表現上すべての文字は64字種のどれかになる。但し2のN乗には合致しない。
 class R {
+    #len;
+    // 静的（クラス）コンテキストでのバリデーション関数自動取得
+    static get #bFn() { return Is.bFn[this.name] ?? null; }
     /**
      * @param {number} [byte=8] 生成するバイト数
      */
-    constructor(v=8, bFn) {this._ = {...R.#from(v, bFn), bFn};}
-//    constructor(v=8, bFn) {this._ = {bFn}; console.log('this._:',this._); this._={...this._, ...R.#from(v)};}
+//    constructor(v=8, bFn) {this._ = {...R.#from(v, bFn), bFn};}
+    constructor(v=8, bFn) {
+        this._ = {...R.#from(v, bFn), bFn};
+        this.#len = new Len(this);
+//        this.#len = {};
+//        Object.defineProperty(this.#len, 'bin', {get: ()=>this._.bin.byteLength});
+//        Object.defineProperty(this.#len, 'str', {get: ()=>this._.str.length});
+    }
     static #from(v,bFn) {
         if (Is.byte(v,bFn)) {return this.#fromByte(v,bFn)}
         else if (Is.str(v)) {return this.#fromStr(v)}
@@ -64,24 +82,42 @@ class R {
     get byte() {return this._.bin.byteLength}
     get bin() {return this._.bin}
     get str() {return this._.str}
-//    get len() {return 0===this._.bin.byteLength ? 0 : Math.ceil((bytesCount * 4) / 3)}
-    static toStr(v) {return this.#from(v,this._.bFn).str}
-    static toBin(v) {return this.#from(v,this._.bFn).bin}
-    static new(v) {return new Gid(v)}
+    get len() {return this.#len}
+    static toStr(v) {return this.#from(v,this.#bFn).str}
+    static toBin(v) {return this.#from(v,this.#bFn).bin}
+    static new(v) {return new this(v)}
     // exportされない以下クラスを参照できるようにする
     static get c() {return C}
     static get is() {return Is}
     static get valid() {return Valid}
 }
+export class R1 extends R {}
+export class R2 extends R {}
+export class R3 extends R {}
+/*
+len = {
+    bin() {return this._.bin.byteLength},
+    str() {return this._.str.length},
+}
+class Len {
+    static bin(bin) {return bin.byteLength}
+    static str(str) {return str.length}
+}
 export class R1 extends R {// byte: 制限なし (Rと同じ機能。引数簡略版。1,2,3,4,...,65536)
     constructor(v=8) {super(v, Is.bFn.R1)}
+    static toStr(v) {return this.#from(v,Is.bFn.R1).str}
+    static toBin(v) {return this.#from(v,Is.bFn.R1).bin}
 }
 export class R2 extends R {// byte: 2のN乗であること(1,2,4,8,16,32,64,128,256,512,...,65536)
     //constructor(v=8) {super(v, b=>0 < b && (b & (b - 1)) === 0)}
     constructor(v=8) {super(v, Is.bFn.R2)}
+    static toStr(v) {return this.#from(v,Is.bFn.R2).str}
+    static toBin(v) {return this.#from(v,Is.bFn.R2).bin}
 }
 export class R3 extends R {// byte: 3の倍数であること(3,6,9,12,15,18,21,24,27,30,33,36,...,65536)
     //constructor(v=8) {super(v, b=>0===(b % 3))}
     constructor(v=8) {super(v, Is.bFn.R3)}
+    static toStr(v) {return this.#from(v,Is.bFn.R3).str}
+    static toBin(v) {return this.#from(v,Is.bFn.R3).bin}
 }
-
+*/
